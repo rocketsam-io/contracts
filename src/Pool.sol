@@ -12,6 +12,12 @@ import "./referral/ReferralSystem.sol";
 */
 contract Pool is Pausable, ReferralSystem {
 
+    /***************
+    *   CONSTANTS  *
+    ***************/
+
+    uint256 private constant MAX_INT = type(uint256).max;
+
     /************
     *   ERRORS  *
     ************/
@@ -25,6 +31,7 @@ contract Pool is Pausable, ReferralSystem {
     * E4    "Access denied, address is not fee collector"
     * E5    "Invalid referrer address"
     * E6    "Invalid deposit amount"
+    * E7    "Trying to set fees and values with different length"
     */
     uint8 public constant ERROR_INVALID_COLLECTOR = 1;
     uint8 public constant ERROR_INVALID_FEE = 2;
@@ -32,6 +39,7 @@ contract Pool is Pausable, ReferralSystem {
     uint8 public constant ERROR_NOT_FEE_COLLECTOR = 4;
     uint8 public constant ERROR_INVALID_REFERRER = 5;
     uint8 public constant ERROR_INVALID_DEPOSIT = 6;
+    uint8 public constant ERROR_INCORRECT_FEE_VALUES = 7;
 
     /**
     * @notice Basic error, thrown every time something goes wrong according to the contract logic.
@@ -46,7 +54,8 @@ contract Pool is Pausable, ReferralSystem {
     /**
     * State change
     */
-    event FeeChanged(uint256 indexed oldFee, uint256 indexed newFee);
+    event MaxFeeChanged(uint256 indexed oldMaxFee, uint256 indexed newMaxFee);
+    event FeeChanged(uint256 valuesCount, uint256 indexed maxFee);
     event FeeCollectorChanged(address indexed oldFeeCollector, address indexed newFeeCollector);
 
     /**
@@ -67,9 +76,11 @@ contract Pool is Pausable, ReferralSystem {
     *   VARIABLES & STATES *
     ***********************/
 
-    uint256 public poolId;
+    uint256 public immutable poolId;
 
-    uint256 public fee;
+    mapping (uint256 => uint256) public fee;
+    uint256[] public values;
+    uint256 public maxFee;
     address public feeCollector;
 
     uint256 public feeEarned;
@@ -119,7 +130,7 @@ contract Pool is Pausable, ReferralSystem {
         require(_feeCollector != address(0), "Invalid fee collector address");
 
         poolId = _poolId;
-        fee = _fee;
+        maxFee = _fee;
         feeCollector = _feeCollector;
     }
 
@@ -130,20 +141,49 @@ contract Pool is Pausable, ReferralSystem {
     /**
     * ADMIN
     * @notice Change fee
-    * @param _fee   new fee
+    * @param _values   values to set fees
+    * @param _fees     fees for `_values` to set.
+    *                  Must be at the same index as value for which
+    *                  you want to set fee for.
+    * @param _maxFee   Fee that is used when value is more than max value in list
     *
     * @dev emits {Pool-FeeChanged}
     */
-    function setFee(uint256 _fee) external onlyOwner {
-        uint256 oldFee = fee;
-        fee = _fee;
-        emit FeeChanged(oldFee, _fee);
+    function setFee(
+        uint256[] calldata _values,
+        uint256[] calldata _fees,
+        uint256 _maxFee
+    ) external onlyOwner {
+        _validate(_values.length == _fees.length, ERROR_INCORRECT_FEE_VALUES);
+        for (uint256 i; i < values.length; i++) {
+            delete fee[values[i]];
+        }
+        values = _values;
+        maxFee = _maxFee;
+        for (uint256 i; i < _values.length; i++) {
+            fee[_values[i]] = _fees[i];
+        }
+        emit FeeChanged(_values.length, _maxFee);
+    }
+
+    /**
+    * ADMIN
+    * @notice Change max fee
+    * @param _maxFee   Fee that is used when value is more than max value
+    *
+    * @dev emits {Pool-FeeChanged}
+    */
+    function setMaxFee(uint256 _maxFee) external onlyOwner {
+        uint256 oldMaxFee = maxFee;
+        maxFee = _maxFee;
+        emit MaxFeeChanged(oldMaxFee, _maxFee);
     }
 
     /**
     * ADMIN
     * @notice Change fee collector address
-    * @param _feeCollector   new fee collector address, should not be zero address
+    * @param _feeCollector   new fee collector address,
+    *                        should not be zero address
     *
     * @dev emits {Pool-FeeCollectorChanged}
     */
@@ -173,6 +213,24 @@ contract Pool is Pausable, ReferralSystem {
     /*************
     *   LOGIC    *
     *************/
+
+    /**
+    * @notice Estimate fee based on value
+    * @param _value Deposit value to estimate fee
+    */
+    function estimateProtocolFee(uint256 _value) public view returns (uint256) {
+        uint256 minValue = MAX_INT;
+        for (uint256 i; i < values.length; i++) {
+            uint256 value = values[i];
+            if (_value <= value && value < minValue) {
+                minValue = value;
+            }
+        }
+        if (minValue == MAX_INT && fee[MAX_INT] == 0) {
+            return maxFee;
+        }
+        return fee[minValue];
+    }
 
     /**
     * @notice Deposit to pool
@@ -227,14 +285,15 @@ contract Pool is Pausable, ReferralSystem {
     * @param _amount    amount to deposit
     */
     function _deposit(address _referrer, uint256 _amount) internal {
+        uint256 protocolFee = maxFee;
         _validate(_amount > 0, ERROR_INVALID_DEPOSIT);
-        _validate(_amount > fee, ERROR_INVALID_FEE);
+        _validate(_amount > protocolFee, ERROR_INVALID_FEE);
         _validate(_msgSender() != _referrer, ERROR_INVALID_REFERRER);
         uint256 referrerEarnings;
         uint256 protocolEarnings;
         if (_referrer != address(0)) {
-            referrerEarnings = estimateReferrerShare(_referrer, fee);
-            protocolEarnings = fee - referrerEarnings;
+            referrerEarnings = estimateReferrerShare(_referrer, protocolFee);
+            protocolEarnings = protocolFee - referrerEarnings;
             feeEarned += protocolEarnings;
 
             ReferrerData memory referrerData = referrers[_referrer];
@@ -242,11 +301,11 @@ contract Pool is Pausable, ReferralSystem {
             ++referrerData.txCount;
             referrers[_referrer] = referrerData;
         } else {
-            protocolEarnings = fee;
-            feeEarned += fee;
+            protocolEarnings = protocolFee;
+            feeEarned += protocolFee;
         }
 
-        uint256 depositAmount = _amount - fee;
+        uint256 depositAmount = _amount - protocolFee;
         balances[_msgSender()] += depositAmount;
         ++depositsCount;
         depositsVolume += depositAmount;

@@ -16,9 +16,11 @@ contract PoolTest is Test {
     uint8 public constant ERROR_NOT_FEE_COLLECTOR = 4;
     uint8 public constant ERROR_INVALID_REFERRER = 5;
     uint8 public constant ERROR_INVALID_DEPOSIT = 6;
+    uint8 public constant ERROR_INCORRECT_FEE_VALUES = 7;
     error Pool_CoreError(uint256 errorCode);
 
-    event FeeChanged(uint256 indexed oldFee, uint256 indexed newFee);
+    event MaxFeeChanged(uint256 indexed oldMaxFee, uint256 indexed newMaxFee);
+    event FeeChanged(uint256 valuesCount, uint256 indexed maxFee);
     event FeeCollectorChanged(address indexed oldFeeCollector, address indexed newFeeCollector);
     event Deposit(
         address indexed depositer,
@@ -48,24 +50,151 @@ contract PoolTest is Test {
     }
 
     function test_setFee() public {
+        uint256[] memory values = new uint256[](4);
+        values[0] = 0.01 ether;
+        values[1] = 0.1 ether;
+        values[2] = 1 ether;
+        values[3] = 10 ether;
+        uint256[] memory fees = new uint256[](4);
+        fees[0] = 0.00015 ether;
+        fees[1] = 0.0002 ether;
+        fees[2] = 0.0003 ether;
+        fees[3] = 0.0004 ether;
+        uint256 maxFee = 0.0005 ether;
+
+        vm.expectEmit();
+        emit FeeChanged(values.length, maxFee);
+
+        pool.setFee(values, fees, maxFee);
+
+        assertEq(pool.maxFee(), maxFee, "Max fee should change");
+        for (uint256 i; i < values.length; i++) {
+            assertEq(pool.values(i), values[i], "Value should change");
+            assertEq(pool.fee(values[i]), fees[i], "Fee should change");
+        }
+    }
+
+    function test_setFee_twice() public {
+        uint256[] memory values = new uint256[](4);
+        values[0] = 0.01 ether;
+        values[1] = 0.1 ether;
+        values[2] = 1 ether;
+        values[3] = 10 ether;
+        uint256[] memory fees = new uint256[](4);
+        fees[0] = 0.00015 ether;
+        fees[1] = 0.0002 ether;
+        fees[2] = 0.0003 ether;
+        fees[3] = 0.0004 ether;
+        uint256 maxFee = 0.0005 ether;
+
+        vm.expectEmit();
+        emit FeeChanged(values.length, maxFee);
+
+        pool.setFee(values, fees, maxFee);
+
+        assertEq(pool.maxFee(), maxFee, "Max fee should change");
+        for (uint256 i; i < values.length; i++) {
+            assertEq(pool.values(i), values[i], "Value should change");
+            assertEq(pool.fee(values[i]), fees[i], "Fee should change");
+        }
+
+        uint256[] memory values1 = new uint256[](4);
+        values1[0] = 0.02 ether;
+        values1[1] = 0.2 ether;
+        values1[2] = 2 ether;
+        values1[3] = 20 ether;
+        uint256[] memory fees1 = new uint256[](4);
+        fees1[0] = 0.00015 ether;
+        fees1[1] = 0.0002 ether;
+        fees1[2] = 0.0003 ether;
+        fees1[3] = 0.0004 ether;
+        uint256 maxFee1 = 0.0005 ether;
+
+        vm.expectEmit();
+        emit FeeChanged(values1.length, maxFee1);
+
+        pool.setFee(values1, fees1, maxFee1);
+
+        assertEq(pool.maxFee(), maxFee1, "Max fee should change");
+        for (uint256 i; i < values1.length; i++) {
+            assertEq(pool.values(i), values1[i], "Value should change");
+            assertEq(pool.fee(values1[i]), fees1[i], "Fee should change");
+        }
+        for (uint256 i; i < values.length; i++) {
+            assertEq(pool.fee(values[i]), 0);
+        }
+    }
+
+    function test_setFee_revert_incorrectFeeValues() public {
+        uint256[] memory values = new uint256[](4);
+        values[0] = 0.01 ether;
+        values[1] = 0.1 ether;
+        values[2] = 1 ether;
+        values[3] = 10 ether;
+        uint256[] memory fees = new uint256[](3);
+        fees[0] = 0.00015 ether;
+        fees[1] = 0.0002 ether;
+        fees[2] = 0.0003 ether;
+        uint256 maxFee = 0.0005 ether;
+
+        vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INCORRECT_FEE_VALUES));
+
+        pool.setFee(values, fees, maxFee);
+    }
+
+    function test_setFee_revert_onlyOwner() public {
+        uint256[] memory values = new uint256[](4);
+        values[0] = 0.01 ether;
+        values[1] = 0.1 ether;
+        values[2] = 1 ether;
+        values[3] = 10 ether;
+        uint256[] memory fees = new uint256[](4);
+        fees[0] = 0.00015 ether;
+        fees[1] = 0.0002 ether;
+        fees[2] = 0.0003 ether;
+        fees[3] = 0.0004 ether;
+        uint256 maxFee = 0.0005 ether;
+
+        vm.expectRevert();
+
+        vm.startPrank(FEE_COLLECTOR);
+        pool.setFee(values, fees, maxFee);
+    }
+
+    function test_estimate() public {
+        test_setFee();
+
+        uint256 fee = pool.estimateProtocolFee(0.001 ether);
+        assertEq(fee, 0.00015 ether, "Incorrect fee");
+        fee = pool.estimateProtocolFee(0.05 ether);
+        assertEq(fee, 0.0002 ether, "Incorrect fee");
+        fee = pool.estimateProtocolFee(1 ether);
+        assertEq(fee, 0.0003 ether, "Incorrect fee");
+        fee = pool.estimateProtocolFee(1.4 ether);
+        assertEq(fee, 0.0004 ether, "Incorrect fee");
+        fee = pool.estimateProtocolFee(102 ether);
+        assertEq(fee, 0.0005 ether, "Incorrect fee");
+    }
+
+    function test_setMaxFee() public {
         uint256 newFee = 0.1 ether;
 
         vm.expectEmit();
-        emit FeeChanged(0, newFee);
+        emit MaxFeeChanged(0, newFee);
 
-        pool.setFee(newFee);
+        pool.setMaxFee(newFee);
 
-        assertEq(pool.fee(), newFee, "Fee should change");
+        assertEq(pool.maxFee(), newFee, "Fee should change");
     }
 
-    function test_setFee_revert() public {
+    function test_setMaxFee_revert() public {
         uint256 newFee = 0.1 ether;
 
         vm.startPrank(FEE_COLLECTOR);
 
         vm.expectRevert();
 
-        pool.setFee(newFee);
+        pool.setMaxFee(newFee);
         vm.stopPrank();
     }
 
@@ -131,7 +260,7 @@ contract PoolTest is Test {
         uint256 amountToDeposit = 1 ether;
         uint256 fee = 0.1 ether;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
 
         vm.expectEmit();
         emit Deposit(
@@ -167,7 +296,7 @@ contract PoolTest is Test {
         uint256 fee = 0.1 ether;
         address referrer = REFERRER;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
         pool.setCommonRefBips(TEN_PERCENT);
         uint256 referrerShare = pool.estimateReferrerShare(referrer, fee);
         uint256 protocolShare = fee - referrerShare;
@@ -206,7 +335,7 @@ contract PoolTest is Test {
         uint256 amountToDeposit = 1 ether;
         uint256 fee = 0.1 ether;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
         pool.pause();
 
         vm.expectRevert();
@@ -219,7 +348,7 @@ contract PoolTest is Test {
         uint256 fee = 0.1 ether;
         address referrer = REFERRER;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
         pool.pause();
 
         vm.expectRevert();
@@ -230,7 +359,7 @@ contract PoolTest is Test {
     function test_deposit_revert_invalidDeposit() public {
         uint256 fee = 0.1 ether;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
 
         vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INVALID_DEPOSIT));
 
@@ -240,7 +369,7 @@ contract PoolTest is Test {
     function test_deposit_revert_invalidFee() public {
         uint256 fee = 0.1 ether;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
 
         vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INVALID_FEE));
 
@@ -252,7 +381,7 @@ contract PoolTest is Test {
         uint256 fee = 0.1 ether;
         address referrer = address(this);
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
 
         vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INVALID_REFERRER));
 
@@ -264,7 +393,7 @@ contract PoolTest is Test {
         uint256 fee = 0.1 ether;
         address sender = FEE_COLLECTOR;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
         vm.deal(sender, fee + amountToDeposit);
         vm.startPrank(sender);
         pool.deposit{value: fee + amountToDeposit}();
@@ -297,7 +426,7 @@ contract PoolTest is Test {
         uint256 amountToDeposit = 1 ether;
         uint256 fee = 0.1 ether;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
         vm.deal(sender, amountToDeposit + fee);
         vm.startPrank(sender);
         pool.deposit{value: amountToDeposit + fee}();
@@ -319,7 +448,7 @@ contract PoolTest is Test {
         uint256 amountToDeposit = 1 ether;
         uint256 fee = 0.1 ether;
 
-        pool.setFee(fee);
+        pool.setMaxFee(fee);
         vm.deal(sender, amountToDeposit + fee);
         vm.startPrank(sender);
         pool.deposit{value: amountToDeposit + fee}();
