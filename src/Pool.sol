@@ -26,20 +26,18 @@ contract Pool is Pausable, ReferralSystem {
     * @notice Contract error codes, used to specify the error
     * CODE LIST:
     * E1    "Invalid fee collector address"
-    * E2    "Invalid depositing fee"
-    * E3    "Balance is zero"
-    * E4    "Access denied, address is not fee collector"
-    * E5    "Invalid referrer address"
-    * E6    "Invalid deposit amount"
-    * E7    "Trying to set fees and values with different length"
+    * E2    "Balance is zero"
+    * E3    "Access denied, address is not fee collector"
+    * E4    "Invalid referrer address"
+    * E5    "Invalid deposit amount"
+    * E6    "Trying to set fees and values with different length"
     */
     uint8 public constant ERROR_INVALID_COLLECTOR = 1;
-    uint8 public constant ERROR_INVALID_FEE = 2;
-    uint8 public constant ERROR_INVALID_BALANCE = 3;
-    uint8 public constant ERROR_NOT_FEE_COLLECTOR = 4;
-    uint8 public constant ERROR_INVALID_REFERRER = 5;
-    uint8 public constant ERROR_INVALID_DEPOSIT = 6;
-    uint8 public constant ERROR_INCORRECT_FEE_VALUES = 7;
+    uint8 public constant ERROR_INVALID_BALANCE = 2;
+    uint8 public constant ERROR_NOT_FEE_COLLECTOR = 3;
+    uint8 public constant ERROR_INVALID_REFERRER = 4;
+    uint8 public constant ERROR_INVALID_DEPOSIT = 5;
+    uint8 public constant ERROR_INCORRECT_FEE_VALUES = 6;
 
     /**
     * @notice Basic error, thrown every time something goes wrong according to the contract logic.
@@ -96,8 +94,6 @@ contract Pool is Pausable, ReferralSystem {
         uint256 depositsVolume;
     }
     mapping (address => AddressData) public addressStatistic;
-    mapping (address => uint256) public addressDepositsCount;
-    mapping (address => uint256) public addressDepositsVolume;
 
     /***************
     *   MODIFIERS  *
@@ -234,17 +230,19 @@ contract Pool is Pausable, ReferralSystem {
 
     /**
     * @notice Deposit to pool
+    * @param _amount    deposit amount
     */
-    function deposit() external payable nonReentrant whenNotPaused {
-        _deposit(address(0), msg.value);
+    function deposit(uint256 _amount) external payable nonReentrant whenNotPaused {
+        _deposit(address(0), _amount, msg.value);
     }
 
     /**
     * @notice Deposit to pool with referrer address
     * @param _referrer  referral address
+    * @param _amount    deposit amount
     */
-    function depositWithReferrer(address _referrer) external payable nonReentrant whenNotPaused {
-        _deposit(_referrer, msg.value);
+    function depositWithReferrer(address _referrer, uint256 _amount) external payable nonReentrant whenNotPaused {
+        _deposit(_referrer, _amount, msg.value);
     }
 
     /**
@@ -284,38 +282,35 @@ contract Pool is Pausable, ReferralSystem {
     * @param _referrer  referral address
     * @param _amount    amount to deposit
     */
-    function _deposit(address _referrer, uint256 _amount) internal {
-        uint256 protocolFee = maxFee;
-        _validate(_amount > 0, ERROR_INVALID_DEPOSIT);
-        _validate(_amount > protocolFee, ERROR_INVALID_FEE);
+    function _deposit(address _referrer, uint256 _amount, uint256 _value) internal {
+        uint256 protocolFee = estimateProtocolFee(_amount);
+        _validate(_value >= _amount + protocolFee, ERROR_INVALID_DEPOSIT);
         _validate(_msgSender() != _referrer, ERROR_INVALID_REFERRER);
         uint256 referrerEarnings;
         uint256 protocolEarnings;
         if (_referrer != address(0)) {
             referrerEarnings = estimateReferrerShare(_referrer, protocolFee);
-            protocolEarnings = protocolFee - referrerEarnings;
-            feeEarned += protocolEarnings;
+            protocolEarnings = _value - _amount - referrerEarnings;
 
             ReferrerData memory referrerData = referrers[_referrer];
             referrerData.earnedAmount += referrerEarnings;
             ++referrerData.txCount;
             referrers[_referrer] = referrerData;
         } else {
-            protocolEarnings = protocolFee;
-            feeEarned += protocolFee;
+            protocolEarnings = _value - _amount;
         }
 
-        uint256 depositAmount = _amount - protocolFee;
-        balances[_msgSender()] += depositAmount;
+        feeEarned += protocolEarnings;
+        balances[_msgSender()] += _amount;
         ++depositsCount;
-        depositsVolume += depositAmount;
+        depositsVolume += _amount;
         addressStatistic[_msgSender()].depositsCount++;
-        addressStatistic[_msgSender()].depositsVolume += depositAmount;
+        addressStatistic[_msgSender()].depositsVolume += _amount;
 
         emit Deposit(
             _msgSender(),
             protocolEarnings,
-            depositAmount,
+            _amount,
             balances[_msgSender()],
             _referrer,
             referrerEarnings

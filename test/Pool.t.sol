@@ -11,12 +11,11 @@ contract PoolTest is Test {
     address public constant REFERRER = 0x00000000219ab540356cBB839Cbe05303d7705Fa;
 
     uint8 public constant ERROR_INVALID_COLLECTOR = 1;
-    uint8 public constant ERROR_INVALID_FEE = 2;
-    uint8 public constant ERROR_INVALID_BALANCE = 3;
-    uint8 public constant ERROR_NOT_FEE_COLLECTOR = 4;
-    uint8 public constant ERROR_INVALID_REFERRER = 5;
-    uint8 public constant ERROR_INVALID_DEPOSIT = 6;
-    uint8 public constant ERROR_INCORRECT_FEE_VALUES = 7;
+    uint8 public constant ERROR_INVALID_BALANCE = 2;
+    uint8 public constant ERROR_NOT_FEE_COLLECTOR = 3;
+    uint8 public constant ERROR_INVALID_REFERRER = 4;
+    uint8 public constant ERROR_INVALID_DEPOSIT = 5;
+    uint8 public constant ERROR_INCORRECT_FEE_VALUES = 6;
     error Pool_CoreError(uint256 errorCode);
 
     event MaxFeeChanged(uint256 indexed oldMaxFee, uint256 indexed newMaxFee);
@@ -256,9 +255,10 @@ contract PoolTest is Test {
     }
 
     function test_deposit() public {
+        test_setFee();
         address sender = address(this);
-        uint256 amountToDeposit = 1 ether;
-        uint256 fee = 0.1 ether;
+        uint256 amountToDeposit = 0.1 ether;
+        uint256 fee = 0.0002 ether;
 
         pool.setMaxFee(fee);
 
@@ -272,7 +272,7 @@ contract PoolTest is Test {
             0
         );
 
-        pool.deposit{value: fee + amountToDeposit}();
+        pool.deposit{value: fee + amountToDeposit}(amountToDeposit);
 
         uint256 after_protocolBalance = address(pool).balance;
         uint256 after_feeEarned = pool.feeEarned();
@@ -291,9 +291,10 @@ contract PoolTest is Test {
     }
 
     function test_depositWithReferrer() public {
+        test_setFee();
         address sender = address(this);
         uint256 amountToDeposit = 1 ether;
-        uint256 fee = 0.1 ether;
+        uint256 fee = 0.0003 ether;
         address referrer = REFERRER;
 
         pool.setMaxFee(fee);
@@ -311,7 +312,7 @@ contract PoolTest is Test {
             referrerShare
         );
 
-        pool.depositWithReferrer{value: fee + amountToDeposit}(referrer);
+        pool.depositWithReferrer{value: fee + amountToDeposit}(referrer, amountToDeposit);
 
         (uint256 after_referrerTxCount, uint256 after_referrerEarned,) = pool.referrers(referrer);
         uint256 after_feeEarned = pool.feeEarned();
@@ -340,7 +341,7 @@ contract PoolTest is Test {
 
         vm.expectRevert();
 
-        pool.deposit{value: fee + amountToDeposit}();
+        pool.deposit{value: fee + amountToDeposit}(amountToDeposit);
     }
 
     function test_depositWithReferrer_revert_paused() public {
@@ -353,7 +354,7 @@ contract PoolTest is Test {
 
         vm.expectRevert();
 
-        pool.depositWithReferrer{value: fee + amountToDeposit}(referrer);
+        pool.depositWithReferrer{value: fee + amountToDeposit}(referrer, amountToDeposit);
     }
 
     function test_deposit_revert_invalidDeposit() public {
@@ -363,17 +364,7 @@ contract PoolTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INVALID_DEPOSIT));
 
-        pool.deposit{value: 0}();
-    }
-
-    function test_deposit_revert_invalidFee() public {
-        uint256 fee = 0.1 ether;
-
-        pool.setMaxFee(fee);
-
-        vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INVALID_FEE));
-
-        pool.deposit{value: fee}();
+        pool.deposit{value: 0}(fee + fee);
     }
 
     function test_depositWithReferrer_revert_invalidReferrer() public {
@@ -385,7 +376,7 @@ contract PoolTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_INVALID_REFERRER));
 
-        pool.depositWithReferrer{value: fee + amountToDeposit}(referrer);
+        pool.depositWithReferrer{value: fee + amountToDeposit}(referrer, amountToDeposit);
     }
 
     function test_withdraw() public {
@@ -396,7 +387,7 @@ contract PoolTest is Test {
         pool.setMaxFee(fee);
         vm.deal(sender, fee + amountToDeposit);
         vm.startPrank(sender);
-        pool.deposit{value: fee + amountToDeposit}();
+        pool.deposit{value: fee + amountToDeposit}(amountToDeposit);
 
         vm.expectEmit();
         emit Withdraw(sender, amountToDeposit);
@@ -429,7 +420,7 @@ contract PoolTest is Test {
         pool.setMaxFee(fee);
         vm.deal(sender, amountToDeposit + fee);
         vm.startPrank(sender);
-        pool.deposit{value: amountToDeposit + fee}();
+        pool.deposit{value: amountToDeposit + fee}(amountToDeposit);
         vm.startPrank(collector);
 
         vm.expectEmit();
@@ -451,7 +442,7 @@ contract PoolTest is Test {
         pool.setMaxFee(fee);
         vm.deal(sender, amountToDeposit + fee);
         vm.startPrank(sender);
-        pool.deposit{value: amountToDeposit + fee}();
+        pool.deposit{value: amountToDeposit + fee}(amountToDeposit);
 
         vm.expectRevert(abi.encodeWithSelector(Pool_CoreError.selector, ERROR_NOT_FEE_COLLECTOR));
 
